@@ -1,0 +1,21 @@
+{
+  "name": "refinery-ui",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "next": "^16.1.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  }
+}

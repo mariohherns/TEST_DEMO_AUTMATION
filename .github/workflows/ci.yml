@@ -163,10 +163,14 @@ jobs:
 
       - name: Build UI
         working-directory: ui
+        env:
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
         run: npm run build
 
       - name: Start UI (background) + wait
         working-directory: ui
+        env:
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
         run: |
           nohup npm run start -- -p 3000 > next.log 2>&1 &
           echo "Waiting for UI..."

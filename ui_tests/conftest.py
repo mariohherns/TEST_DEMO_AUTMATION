@@ -11,5 +11,14 @@ def pytest_runtest_makereport(item, call):
     if rep.when == "call" and rep.failed:
         driver = item.funcargs.get("driver")
         if driver:
-            path = os.path.join(ART_DIR, f"{item.name}.png")
-            driver.save_screenshot(path)
+            # Screenshot
+            driver.save_screenshot(os.path.join(ART_DIR, f"{item.name}.png"))
+
+            # Page HTML
+            with open(os.path.join(ART_DIR, f"{item.name}.html"), "w", encoding="utf-8") as f:
+                f.write(driver.page_source)
+
+            # Current URL
+            with open(os.path.join(ART_DIR, f"{item.name}.url.txt"), "w", encoding="utf-8") as f:
+                f.write(driver.current_url)
+

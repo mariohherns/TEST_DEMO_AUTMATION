@@ -59,17 +59,24 @@ jobs:
             sleep 1
           done
 
+      - name: Show FastAPI log (always)
+        if: always()
+        run: |
+          echo "==== backend/uvicorn.log (tail) ===="
+          (test -f backend/uvicorn.log && tail -n 200 backend/uvicorn.log) || echo "uvicorn.log not found"
+
       - name: Run backend tests
         working-directory: backend
         run: |
           pytest -q app/tests
 
-      - name: Upload FastAPI log (on failure)
-        if: failure()
+      - name: Upload FastAPI log (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fastapi-log
           path: backend/uvicorn.log
+
 
   ui_smoke:
     name: UI Smoke Tests (Selenium)
@@ -97,6 +104,7 @@ jobs:
       JWT_SECRET: ci_secret
       JWT_EXPIRE_MIN: "120"
       CORS_ORIGINS: http://localhost:3000
+
       NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
       API_BASE: http://127.0.0.1:8000
 

@@ -1,4 +1,5 @@
 import pytest
+import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -7,7 +8,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-BASE_URL = "http://localhost:3000"
+# Make base URL configurable (CI-friendly)
+BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:3000")
 
 
 @pytest.fixture

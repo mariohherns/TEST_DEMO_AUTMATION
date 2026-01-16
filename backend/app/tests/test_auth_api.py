@@ -18,3 +18,11 @@ def test_login_admin():
     assert "access_token" in body
     assert body.get("token_type") == "bearer"
 
+def test_login_invalid_credentials():
+    r = httpx.post(
+        f"{API}/auth/login",
+        data={"username": "wrong", "password": "wrong123"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=10,
+    )
+    assert r.status_code == 401

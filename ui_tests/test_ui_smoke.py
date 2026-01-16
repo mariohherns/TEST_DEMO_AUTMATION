@@ -11,7 +11,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 # Make base URL configurable (CI-friendly)
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:3000")
 
-
 @pytest.fixture
 def driver():
     options = Options()

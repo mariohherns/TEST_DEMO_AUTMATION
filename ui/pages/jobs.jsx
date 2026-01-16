@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createJob, listJobs, getResult, getJob } from "../lib/api";
 
 export default function Jobs() {
-  const [input, setInput] = useState("hello world");
+  const [input, setInput] = useState("");
   const [jobs, setJobs] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -62,7 +62,6 @@ export default function Jobs() {
       </div>
 
       <p style={{ marginTop: 10 }}>
-        Tip: submit text containing <b>crash</b> to simulate a FAILED job (great for negative testing).
       </p>
 
       {msg && <p>{msg}</p>}

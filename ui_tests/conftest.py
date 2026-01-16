@@ -14,11 +14,12 @@ def pytest_runtest_makereport(item, call):
             # Screenshot
             driver.save_screenshot(os.path.join(ART_DIR, f"{item.name}.png"))
 
-            # Page HTML
-            with open(os.path.join(ART_DIR, f"{item.name}.html"), "w", encoding="utf-8") as f:
-                f.write(driver.page_source)
-
-            # Current URL
-            with open(os.path.join(ART_DIR, f"{item.name}.url.txt"), "w", encoding="utf-8") as f:
+            # URL
+            with open(os.path.join(ART_DIR, f"{item.name}.url.txt"), "w") as f:
                 f.write(driver.current_url)
+
+            # HTML (first ~200KB)
+            html = driver.page_source
+            with open(os.path.join(ART_DIR, f"{item.name}.html"), "w", encoding="utf-8") as f:
+                f.write(html[:200000])
 

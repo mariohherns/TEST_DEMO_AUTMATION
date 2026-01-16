@@ -18,6 +18,8 @@ def driver():
     options.add_argument("--headless=new")
     options.add_argument("--window-size=1280,900")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
 
     service = Service(ChromeDriverManager().install())
     d = webdriver.Chrome(service=service, options=options)
@@ -27,7 +29,7 @@ def driver():
 
 
 def login_as(driver, wait, username_val="viewer", password_val="viewer123"):
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 40)
     driver.get(f"{BASE_URL}/login")
 
     # Clear auth every time to isolate tests
@@ -52,7 +54,17 @@ def login_as(driver, wait, username_val="viewer", password_val="viewer123"):
     login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='login-btn']")))
   
     login_btn.click()
-
+    
+    try:
+        wait.until(EC.url_contains("/jobs"))
+    except Exception:
+        print("\n[DEBUG] Login did not navigate to /jobs")
+        print("[DEBUG] Current URL:", driver.current_url)
+        print("[DEBUG] Page title:", driver.title)
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        print("[DEBUG] Body text (first 500 chars):", body_text[:500])
+        raise
+    
     # Stronger than URL check: wait for Jobs page element
     wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='job-input']")))
     wait.until(EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='jobs-table']")))

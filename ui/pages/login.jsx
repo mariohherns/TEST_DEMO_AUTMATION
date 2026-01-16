@@ -19,7 +19,7 @@ export default function Login() {
 
   return (
     <div style={{ padding: 20 }}>
-      <h2>AI Refinery QA Lab</h2>
+      <h2>QA Lab</h2>
       <p>Login (OAuth2 password flow)</p>
 
       <div>

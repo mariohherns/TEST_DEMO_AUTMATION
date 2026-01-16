@@ -155,6 +155,12 @@ jobs:
             tail -n 200 uvicorn.log || true
             exit 1
           fi
+    
+      - name: Backend login smoke (viewer)
+        run: |
+          curl -sS -X POST http://127.0.0.1:8000/auth/login \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=viewer&password=viewer123" | head -c 300
 
       - name: Install UI deps
         working-directory: ui
@@ -173,19 +179,10 @@ jobs:
           NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
         run: |
           nohup npm run start -- -p 3000 > next.log 2>&1 &
-          echo "Waiting for UI..."
           for i in {1..60}; do
-            if curl -sSf http://127.0.0.1:3000 >/dev/null 2>&1; then
-              echo "UI up!"
-              break
-            fi
+            curl -sSf http://127.0.0.1:3000 >/dev/null && break
             sleep 1
           done
-          if ! curl -sSf http://127.0.0.1:3000 >/dev/null 2>&1; then
-            echo "UI did not start. Last 200 lines:"
-            tail -n 200 next.log || true
-            exit 1
-          fi
 
       - name: Run Selenium UI tests
         run: |

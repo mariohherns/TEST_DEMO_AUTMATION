@@ -13,7 +13,7 @@ export async function login(username, password) {
   const r = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString()
+    body,
   });
 
   if (!r.ok) throw new Error("Login failed");

@@ -160,12 +160,6 @@ jobs:
         run: |
           npm ci || npm install
 
-      - name: Run UI unit/integration tests (Jest)
-        working-directory: ui
-        env:
-          NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
-        run: npm test -- --ci --verbose
-
       - name: Build UI
         working-directory: ui
         env:
@@ -210,3 +204,29 @@ jobs:
             ui_tests/artifacts
             backend/uvicorn.log
             ui/next.log
+
+  ui_jest:
+    name: UI Unit + Integration Tests (Jest)
+    runs-on: ubuntu-latest
+    needs: [backend_tests]
+
+    env:
+      NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install UI deps
+        working-directory: ui
+        run: |
+          npm ci || npm install
+
+      - name: Run Jest
+        working-directory: ui
+        run: npm test -- --ci --verbose

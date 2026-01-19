@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { getAnalytics } from "../lib/api";
+import { goTo } from "../lib/nav";
 
 export default function Analytics() {
   const [data, setData] = useState(null);
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
   useEffect(() => {
-    if (!token) window.location.href = "/login";
+    if (!token) {
+      goTo("/login");
+      return;
+    }
+
     (async () => {
       const a = await getAnalytics(token);
       setData(a);
@@ -21,3 +26,4 @@ export default function Analytics() {
     </div>
   );
 }
+

@@ -8,6 +8,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+
+pytestmark = [pytest.mark.smoke]
+
 # Make base URL configurable (CI-friendly)
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:3000")
 
@@ -28,7 +31,7 @@ def driver():
 
 
 def login_as(driver, wait, username_val="viewer", password_val="viewer123"):
-    wait = WebDriverWait(driver, 40)
+    wait = WebDriverWait(driver, 20)
     driver.get(f"{BASE_URL}/login")
 
     # Clear auth every time to isolate tests

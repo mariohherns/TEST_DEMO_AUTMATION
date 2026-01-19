@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { login } from "../lib/api";
+import { goTo } from "../lib/nav";
 
 export default function Login() {
   const [username, setU] = useState("viewer");
@@ -11,7 +12,7 @@ export default function Login() {
     try {
       const data = await login(username, password);
       localStorage.setItem("token", data.access_token);
-      window.location.href = "/jobs";
+      goTo("/jobs");
     } catch {
       setErr("Login failed");
     }
@@ -26,7 +27,7 @@ export default function Login() {
         <input data-testid="username" placeholder="username" value={username} onChange={e => setU(e.target.value)} />
       </div>
       <div style={{ marginTop: 8 }}>
-        <input  data-testid="password" placeholder="password" type="password" value={password} onChange={e => setP(e.target.value)} />
+        <input data-testid="password" placeholder="password" type="password" value={password} onChange={e => setP(e.target.value)} />
       </div>
 
       <button data-testid="login-btn" style={{ marginTop: 12 }} onClick={onLogin}>Login</button>

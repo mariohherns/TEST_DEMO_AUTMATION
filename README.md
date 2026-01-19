@@ -44,3 +44,7 @@ Example:
 pytest -m smoke
 pytest -m security
 pytest -m sit
+
+
+python3.11 -m venv venv        
+source venv/bin/activate

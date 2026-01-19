@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createJob, listJobs, getResult, getJob } from "../lib/api";
+import { goTo } from "../lib/nav";
 
 export default function Jobs() {
   const [input, setInput] = useState("");
@@ -18,7 +19,10 @@ export default function Jobs() {
   }
 
   useEffect(() => {
-    if (!token) window.location.href = "/login";
+    if (!token) {
+      goTo("/login");
+      return; 
+    }
     refresh();
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);

@@ -160,6 +160,12 @@ jobs:
         run: |
           npm ci || npm install
 
+      - name: Run UI unit/integration tests (Jest)
+        working-directory: ui
+        env:
+          NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+        run: npm test -- --ci --verbose
+
       - name: Build UI
         working-directory: ui
         env:

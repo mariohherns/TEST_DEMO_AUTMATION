@@ -7,7 +7,7 @@ name: CI
 
 jobs:
   backend_tests:
-    name: Backend API + SIT Tests (pytest)
+    name: Backend | Integration + System (SIT) | pytest
     runs-on: ubuntu-latest
 
     services:
@@ -81,9 +81,34 @@ jobs:
           name: fastapi-log
           path: backend/uvicorn.log
 
+  ui_jest:
+    name: UI | Unit + Integration Tests | Jest
+    runs-on: ubuntu-latest
+    needs: [backend_tests]
+
+    env:
+      NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install UI deps
+        working-directory: ui
+        run: |
+          npm ci || npm install
+
+      - name: Run Jest
+        working-directory: ui
+        run: npm test -- --ci --verbose
 
   ui_smoke:
-    name: UI Smoke Tests (Selenium)
+    name: UI | E2E Smoke Tests | Selenium
     runs-on: ubuntu-latest
     needs: [backend_tests]
 
@@ -204,29 +229,3 @@ jobs:
             ui_tests/artifacts
             backend/uvicorn.log
             ui/next.log
-
-  ui_jest:
-    name: UI Unit + Integration Tests (Jest)
-    runs-on: ubuntu-latest
-    needs: [backend_tests]
-
-    env:
-      NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install UI deps
-        working-directory: ui
-        run: |
-          npm ci || npm install
-
-      - name: Run Jest
-        working-directory: ui
-        run: npm test -- --ci --verbose

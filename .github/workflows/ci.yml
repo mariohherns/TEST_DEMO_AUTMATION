@@ -94,6 +94,8 @@ jobs:
 
     env:
       NEXT_PUBLIC_API_BASE: http://127.0.0.1:8000
+      JEST_JUNIT_OUTPUT_DIR: test-results
+      JEST_JUNIT_OUTPUT_NAME: jest-junit.xml
 
     steps:
       - name: Checkout
@@ -108,21 +110,23 @@ jobs:
         working-directory: ui
         run: |
           npm ci || npm install
-          npm i -D jest-junit
 
       - name: Run Jest (JUnit report)
         working-directory: ui
         run: |
           mkdir -p test-results
-          npm test -- --ci --verbose --reporters=default --reporters=jest-junit
+          npm test -- \
+            --ci \
+            --verbose \
+            --reporters=default \
+            --reporters=jest-junit
 
       - name: Upload Jest artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ui-jest-artifacts
-          path: |
-            ui/test-results
+          path: ui/test-results
 
   ui_smoke:
     name: UI | E2E Smoke Tests | Playwright (pytest)

@@ -58,7 +58,7 @@ def login(
 
     # Create JWT token with user identity + role.
     # The "role" claim supports role-based access control (admin endpoints).
-    token = create_access_token(sub=user.username, role=user.role)
+    token = create_access_token(sub=user."username", role=user.role)
 
     # Standard OAuth2-style response (used by Swagger + client libraries)
     return {"access_token": token, "token_type": "bearer"}

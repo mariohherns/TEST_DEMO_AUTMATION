@@ -349,19 +349,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # sanitize Jira base url (remove hidden CRLF/newlines + trailing slash)
           JIRA_BASE_URL="$(printf "%s" "$JIRA_BASE_URL" | tr -d '\r\n' | sed 's:/*$::')"
-
           label="gha-${COMMIT_SHA}"
 
-          # Safe search using urlencoded jql (avoids curl URL malformed errors)
           resp=$(mktemp)
           code=$(curl -sS -o "$resp" -w "%{http_code}" \
             -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
             -H "Accept: application/json" \
             -G \
             --data-urlencode "jql=project=${JIRA_PROJECT_KEY} AND labels=${label} ORDER BY created DESC" \
-            "${JIRA_BASE_URL}/rest/api/3/search")
+            "${JIRA_BASE_URL}/rest/api/3/search/jql")
 
           if [[ "$code" -ge 400 ]]; then
             echo "Jira search failed HTTP $code"

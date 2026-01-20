@@ -398,6 +398,11 @@ jobs:
           fi
 
           echo "zip=jira-attachments.zip" >> "$GITHUB_OUTPUT"
+          echo "BASE_URL_PREFIX: $(printf "%s" "$JIRA_BASE_URL" | cut -c1-40)"
+          echo "PROJECT_KEY: [$JIRA_PROJECT_KEY]"
+          echo "ISSUE_TYPE: [$JIRA_ISSUE_TYPE]"
+          echo "EMAIL_PREFIX: $(printf "%s" "$JIRA_EMAIL" | cut -c1-5)***"
+          echo "TOKEN_LENGTH: ${#JIRA_API_TOKEN}"
 
       - name: Create/Update JIRA issue (main only)
         if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'

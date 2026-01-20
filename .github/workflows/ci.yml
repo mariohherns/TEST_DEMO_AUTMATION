@@ -339,6 +339,7 @@ jobs:
           echo "zip=jira-attachments.zip" >> $GITHUB_OUTPUT
 
       - name: Create/Update JIRA issue (main only)
+      - name: Create/Update JIRA issue (main only)
         if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'
         id: jira
         env:
@@ -354,21 +355,36 @@ jobs:
           set -euo pipefail
 
           auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
-          label="gha-${COMMIT_SHA}"
 
-          jql="project=${JIRA_PROJECT_KEY} AND labels=${label} ORDER BY created DESC"
-          jql_enc=$(python3 - <<PY
-          import urllib.parse
-          print(urllib.parse.quote("""$jql"""))
+          short_sha="${COMMIT_SHA:0:7}"
+          marker="CI-${short_sha}"
+          title="[${marker}] Test failures on main"
+
+          desc=$(python3 - <<'PY'
+          import os
+          print(f"""CI run: {os.environ['RUN_URL']}
+          Commit: {os.environ['COMMIT_SHA']}
+
+          Failures summary:
+          {os.environ.get('SUMMARY_TEXT','')}
+          """)
           PY
           )
 
-          # search existing
+              # Build JQL safely as data, not inline shell quoting
+              JQL="project=${JIRA_PROJECT_KEY} AND summary ~ \"${marker}\" ORDER BY created DESC"
+              jql_enc=$(python3 - <<'PY'
+          import os, urllib.parse
+          print(urllib.parse.quote(os.environ["JQL"], safe=""))
+          PY
+          )
+
+          # Search existing issue (by summary marker)
           resp=$(mktemp)
           code=$(curl -sS -o "$resp" -w "%{http_code}" \
             -H "Authorization: Basic $auth" \
             -H "Accept: application/json" \
-            "$JIRA_BASE_URL/rest/api/3/search?jql=$jql_enc")
+            "${JIRA_BASE_URL}/rest/api/3/search?jql=${jql_enc}")
 
           if [[ "$code" -ge 400 ]]; then
             echo "Jira search failed HTTP $code"
@@ -384,105 +400,61 @@ jobs:
           PY
           "$resp")
 
-                    desc=$(python3 - <<'PY'
-          import os
-          print(f"""CI run: {os.environ['RUN_URL']}
-          Commit: {os.environ['COMMIT_SHA']}
-
-          Failures summary:
-          {os.environ.get('SUMMARY_TEXT','')}
-          """)
-          PY
-          )
-
-                    if [[ -n "$existing_key" ]]; then
-                      issue="$existing_key"
-                      echo "Updating existing issue: $issue"
-                      payload=$(python3 - <<PY
+              if [[ -n "$existing_key" ]]; then
+                issue="$existing_key"
+                echo "Existing issue found: $issue (adding comment)"
+                payload=$(python3 - <<PY
           import json, os
           body=os.environ["desc"]
           print(json.dumps({"body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":body}]}]}}))
           PY
           )
-                      resp2=$(mktemp)
-                      code2=$(curl -sS -o "$resp2" -w "%{http_code}" -X POST \
-                        -H "Authorization: Basic $auth" \
-                        -H "Accept: application/json" \
-                        -H "Content-Type: application/json" \
-                        "$JIRA_BASE_URL/rest/api/3/issue/$issue/comment" \
-                        -d "$payload")
-                      if [[ "$code2" -ge 400 ]]; then
-                        echo "Jira comment failed HTTP $code2"
-                        cat "$resp2"
-                        exit 1
-                      fi
-                    else
-                      echo "Creating new issue..."
-                      payload=$(python3 - <<PY
+            resp2=$(mktemp)
+            code2=$(curl -sS -o "$resp2" -w "%{http_code}" -X POST \
+              -H "Authorization: Basic $auth" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              "${JIRA_BASE_URL}/rest/api/3/issue/${issue}/comment" \
+              -d "$payload")
+            if [[ "$code2" -ge 400 ]]; then
+              echo "Jira comment failed HTTP $code2"
+              cat "$resp2"
+              exit 1
+            fi
+          else
+            echo "Creating new issue..."
+            payload=$(python3 - <<PY
           import json, os
           payload={
             "fields":{
               "project":{"key":os.environ["JIRA_PROJECT_KEY"]},
               "issuetype":{"name":os.environ["JIRA_ISSUE_TYPE"]},
-              "summary":f"[CI] Test failures on main @ {os.environ['COMMIT_SHA'][:7]}",
-              "labels":[f"gha-{os.environ['COMMIT_SHA']}", "ci", "automated"],
+              "summary":os.environ["title"],
+              "labels":["ci","automated",os.environ["marker"]],
               "description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":os.environ["desc"]}]}]}
             }
           }
           print(json.dumps(payload))
           PY
           )
-                      resp3=$(mktemp)
-                      code3=$(curl -sS -o "$resp3" -w "%{http_code}" -X POST \
-                        -H "Authorization: Basic $auth" \
-                        -H "Accept: application/json" \
-                        -H "Content-Type: application/json" \
-                        "$JIRA_BASE_URL/rest/api/3/issue" \
-                        -d "$payload")
-                      if [[ "$code3" -ge 400 ]]; then
-                        echo "Jira create issue failed HTTP $code3"
-                        cat "$resp3"
-                        exit 1
-                      fi
-                      issue=$(python3 - <<'PY'
+            resp3=$(mktemp)
+            code3=$(curl -sS -o "$resp3" -w "%{http_code}" -X POST \
+              -H "Authorization: Basic $auth" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              "${JIRA_BASE_URL}/rest/api/3/issue" \
+              -d "$payload")
+            if [[ "$code3" -ge 400 ]]; then
+              echo "Jira create issue failed HTTP $code3"
+              cat "$resp3"
+              exit 1
+            fi
+            issue=$(python3 - <<'PY'
           import json,sys
           data=json.load(open(sys.argv[1]))
           print(data["key"])
           PY
           "$resp3")
-          fi
+              fi
 
-          echo "issue=$issue" >> $GITHUB_OUTPUT
-
-      - name: Attach reports + logs to JIRA issue
-        if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'
-        env:
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
-          ISSUE_KEY: ${{ steps.jira.outputs.issue }}
-        run: |
-          set -euo pipefail
-          auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
-
-          # Attach the zip created earlier
-          if [[ ! -f jira-attachments.zip ]]; then
-            echo "No jira-attachments.zip found; skipping attachment."
-            exit 0
-          fi
-
-          resp=$(mktemp)
-          code=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Basic $auth" \
-            -H "X-Atlassian-Token: no-check" \
-            -H "Accept: application/json" \
-            -F "file=@jira-attachments.zip" \
-            "$JIRA_BASE_URL/rest/api/3/issue/${ISSUE_KEY}/attachments")
-
-          if [[ "$code" -ge 400 ]]; then
-            echo "Jira attach failed HTTP $code"
-            cat "$resp"
-            exit 1
-          fi
-
-          echo "Attached jira-attachments.zip to ${ISSUE_KEY}"
+              echo "issue=$issue" >> $GITHUB_OUTPUT

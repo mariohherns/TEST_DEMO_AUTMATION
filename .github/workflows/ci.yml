@@ -316,23 +316,88 @@ jobs:
         if: steps.gate.outputs.create == 'true'
         id: pkg
         run: |
-          set -e
+          set -euo pipefail
+
           mkdir -p jira-attachments
 
+          # Collect the most useful evidence for Jira (reports + logs + junit)
+          # Keep it targeted so the zip stays small and attachments are relevant.
           find artifacts -type f \( \
-            -name "*.html" -o \
-            -name "*.xml" -o \
-            -name "*.log" \
-          \) -print | head -n 200 > files.txt || true
+            -iname "*.html" -o \
+            -iname "*.xml"  -o \
+            -iname "*.log"  -o \
+            -iname "*.txt"  -o \
+            -iname "*.json" -o \
+            -iname "*.png"  -o \
+            -iname "*.jpg"  -o \
+            -iname "*.jpeg" -o \
+            -iname "*.webp" -o \
+            -iname "*.zip"  -o \
+            -iname "*.har"  -o \
+            -iname "*.trace" -o \
+            -iname "*.csv" \
+          \) \
+          ! -path "*/node_modules/*" \
+          ! -path "*/.next/*" \
+          ! -path "*/__pycache__/*" \
+          -print > files.txt || true
 
-          while IFS= read -r f; do
-            dest="jira-attachments/${f#artifacts/}"
-            mkdir -p "$(dirname "$dest")"
-            cp "$f" "$dest" || true
-          done < files.txt
+          if [[ ! -s files.txt ]]; then
+            echo "No report/log files found under artifacts/. Creating empty attachment bundle."
+            echo "placeholder" > jira-attachments/EMPTY_ATTACHMENTS.txt
+          else
+            # Cap count to keep bundle manageable
+            head -n 300 files.txt > files.capped.txt
 
+            # Copy files while preserving relative structure (artifacts/ -> jira-attachments/)
+            while IFS= read -r f; do
+              rel="${f#artifacts/}"
+              dest="jira-attachments/${rel}"
+              mkdir -p "$(dirname "$dest")"
+              cp "$f" "$dest" || true
+            done < files.capped.txt
+          fi
+
+          # Create zip
           zip -r jira-attachments.zip jira-attachments >/dev/null
-          echo "zip=jira-attachments.zip" >> $GITHUB_OUTPUT
+
+          # Optional: size guard (Jira limits vary; 10–25MB is common depending on config)
+          bytes=$(wc -c < jira-attachments.zip | tr -d ' ')
+          echo "Attachment zip size (bytes): $bytes"
+
+          # If too big, rebuild a smaller bundle containing only key files
+          max_bytes=$((20 * 1024 * 1024))  # 20MB
+          if [[ "$bytes" -gt "$max_bytes" ]]; then
+            echo "Zip > 20MB, rebuilding smaller bundle with key files only..."
+            rm -rf jira-attachments jira-attachments.zip
+            mkdir -p jira-attachments
+
+            find artifacts -type f \( \
+              -iname "*junit*.xml" -o \
+              -iname "*jest-junit*.xml" -o \
+              -iname "*e2e*.xml" -o \
+              -iname "*.html" -o \
+              -iname "uvicorn.log" -o \
+              -iname "next.log" \
+            \) -print | head -n 120 > files.key.txt || true
+
+            if [[ ! -s files.key.txt ]]; then
+              echo "placeholder" > jira-attachments/EMPTY_ATTACHMENTS.txt
+            else
+              while IFS= read -r f; do
+                rel="${f#artifacts/}"
+                dest="jira-attachments/${rel}"
+                mkdir -p "$(dirname "$dest")"
+                cp "$f" "$dest" || true
+              done < files.key.txt
+            fi
+
+            zip -r jira-attachments.zip jira-attachments >/dev/null
+            bytes=$(wc -c < jira-attachments.zip | tr -d ' ')
+            echo "Rebuilt zip size (bytes): $bytes"
+          fi
+
+          echo "zip=jira-attachments.zip" >> "$GITHUB_OUTPUT"
 
       - name: Create/Update JIRA issue (main only)
         if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'
@@ -349,9 +414,19 @@ jobs:
         run: |
           set -euo pipefail
 
+          # sanitize (remove hidden CRLF/newlines + trailing slash)
           JIRA_BASE_URL="$(printf "%s" "$JIRA_BASE_URL" | tr -d '\r\n' | sed 's:/*$::')"
+          JIRA_PROJECT_KEY="$(printf "%s" "$JIRA_PROJECT_KEY" | tr -d '\r\n ' )"
+          JIRA_ISSUE_TYPE="$(printf "%s" "$JIRA_ISSUE_TYPE" | tr -d '\r\n')"
+
+          if [[ -z "${JIRA_PROJECT_KEY}" ]]; then
+            echo "JIRA_PROJECT_KEY is empty; check GitHub Secrets."
+            exit 1
+          fi
+
           label="gha-${COMMIT_SHA}"
 
+          # Atlassian now requires /search/jql
           resp=$(mktemp)
           code=$(curl -sS -o "$resp" -w "%{http_code}" \
             -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
@@ -420,15 +495,19 @@ jobs:
 
             payload=$(python3 - <<'PY'
           import json, os
+          project_key=os.environ["JIRA_PROJECT_KEY"].strip()
+          issue_type=os.environ["JIRA_ISSUE_TYPE"].strip()
+          desc=os.environ["DESC"]
+
           payload={
             "fields":{
-              "project":{"key":os.environ["JIRA_PROJECT_KEY"]},
-              "issuetype":{"name":os.environ["JIRA_ISSUE_TYPE"]},
+              "project":{"key": project_key},
+              "issuetype":{"name": issue_type},
               "summary":f"[CI] Test failures on main @ {os.environ['COMMIT_SHA'][:7]}",
               "labels":[f"gha-{os.environ['COMMIT_SHA']}", "ci", "automated"],
               "description":{
                 "type":"doc","version":1,
-                "content":[{"type":"paragraph","content":[{"type":"text","text":os.environ["DESC"]}]}]
+                "content":[{"type":"paragraph","content":[{"type":"text","text": desc}]}]
               }
             }
           }

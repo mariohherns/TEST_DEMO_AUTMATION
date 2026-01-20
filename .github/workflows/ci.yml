@@ -49,7 +49,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install fastapi uvicorn
-          pip install pytest httpx
+          pip install pytest httpx pytest-html
 
       - name: Start FastAPI (background) + wait
         working-directory: backend
@@ -69,17 +69,23 @@ jobs:
             exit 1
           fi
 
-      - name: Run backend tests
+      - name: Run backend tests (JUnit + HTML report)
         working-directory: backend
         run: |
-          pytest -q app/tests
+          mkdir -p test-results backend/artifacts
+          pytest -q app/tests \
+            --junitxml=test-results/backend-junit.xml \
+            --html=artifacts/backend_report.html --self-contained-html
 
-      - name: Upload FastAPI log (always)
+      - name: Upload backend artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fastapi-log
-          path: backend/uvicorn.log
+          name: backend-artifacts
+          path: |
+            backend/uvicorn.log
+            backend/test-results
+            backend/artifacts
 
   ui_jest:
     name: UI | Unit + Integration Tests | Jest
@@ -102,13 +108,24 @@ jobs:
         working-directory: ui
         run: |
           npm ci || npm install
+          npm i -D jest-junit
 
-      - name: Run Jest
+      - name: Run Jest (JUnit report)
         working-directory: ui
-        run: npm test -- --ci --verbose
+        run: |
+          mkdir -p test-results
+          npm test -- --ci --verbose --reporters=default --reporters=jest-junit
+
+      - name: Upload Jest artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-jest-artifacts
+          path: |
+            ui/test-results
 
   ui_smoke:
-    name: UI | E2E Smoke Tests | Selenium
+    name: UI | E2E Smoke Tests | Playwright (pytest)
     runs-on: ubuntu-latest
     needs: [backend_tests]
 
@@ -154,14 +171,15 @@ jobs:
           cache: "npm"
           cache-dependency-path: ui/package-lock.json
 
-      - name: Install Chrome
-        uses: browser-actions/setup-chrome@v1
-
-      - name: Install backend + UI test deps
+      - name: Install backend + UI test deps (Playwright)
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest selenium webdriver-manager pytest-html
+          pip install pytest pytest-html playwright pytest-playwright
+
+      - name: Install Playwright browsers
+        run: |
+          python -m playwright install --with-deps chromium
 
       - name: Start FastAPI (background) + wait
         working-directory: backend
@@ -215,17 +233,22 @@ jobs:
         run: |
           curl -sSf http://127.0.0.1:3000/login | head -n 20
 
-      - name: Run Selenium UI tests
+      - name: Run Playwright UI tests (JUnit + HTML report)
         run: |
-          mkdir -p ui_tests/artifacts
-          pytest -q ui_tests --html=ui_tests/artifacts/ui_report.html --self-contained-html
+          mkdir -p ui_tests/artifacts ui_tests/test-results
+          pytest -q ui_tests/e2e/smoke \
+            --junitxml=ui_tests/test-results/ui-e2e-junit.xml \
+            --html=ui_tests/artifacts/ui_report.html --self-contained-html
 
       - name: Upload UI artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-artifacts
+          name: ui-e2e-artifacts
           path: |
+            ui_tests/artifacts
+            ui_tests/test-results
             ui_tests/artifacts
             backend/uvicorn.log
             ui/next.log
+            test-results

@@ -1,11 +1,9 @@
-import os
 import httpx
 import pytest
 
-pytestmark = [pytest.mark.smoke, pytest.mark.security]
 
-API = os.getenv("API_BASE", "http://127.0.0.1:8000")
-
+@pytest.mark.security
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     "username,password,expected_status,expect_token",
     [
@@ -21,30 +19,39 @@ API = os.getenv("API_BASE", "http://127.0.0.1:8000")
         "invalid-password",
     ],
 )
-def test_login_parametrized(username, password, expected_status, expect_token):
+def test_login_parametrized(
+    api_base: str,
+    username: str,
+    password: str,
+    expected_status: int,
+    expect_token: bool,
+) -> None:
     """
-    Parametrized login test covering both valid and invalid credentials.
+    Parametrized login smoke test covering valid and invalid credentials.
 
     QE notes:
-    - Reduces duplicated test logic
-    - Makes it easy to add more auth scenarios
-    - Improves CI visibility with readable test IDs
+    - Validates OAuth2 password flow
+    - Covers both success and failure paths
+    - Fast enough for PR smoke gates
     """
 
+    # Call login endpoint directly (do NOT reuse token fixtures here)
     response = httpx.post(
-        f"{API}/auth/login",
+        f"{api_base}/auth/login",
         data={"username": username, "password": password},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=10,
     )
 
+    # Verify HTTP status
     assert response.status_code == expected_status, response.text
 
     body = response.json()
 
     if expect_token:
-        assert "access_token" in body
-        assert body.get("token_type") == "bearer"
+        # Successful login should return a bearer token
+        assert "access_token" in body, body
+        assert body.get("token_type") == "bearer", body
     else:
-        # For invalid logins, we assert error detail instead
-        assert "detail" in body
+        # Invalid login should return an error payload
+        assert "detail" in body, body

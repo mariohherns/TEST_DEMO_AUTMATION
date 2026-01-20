@@ -256,3 +256,191 @@ jobs:
             backend/uvicorn.log
             ui/next.log
             test-results
+
+  jira_defects:
+    name: JIRA | Create defect + attach reports
+    runs-on: ubuntu-latest
+    needs: [backend_tests, ui_jest, ui_smoke]
+    if: always()
+
+    steps:
+      - name: Gate (only create on failures)
+        id: gate
+        run: |
+          if [[ "${{ needs.backend_tests.result }}" == "success" && \
+                "${{ needs.ui_jest.result }}" == "success" && \
+                "${{ needs.ui_smoke.result }}" == "success" ]]; then
+            echo "create=false" >> $GITHUB_OUTPUT
+          else
+            echo "create=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        if: steps.gate.outputs.create == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install xml utils
+        if: steps.gate.outputs.create == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xmlstarlet zip
+
+      - name: Summarize failures (JUnit)
+        if: steps.gate.outputs.create == 'true'
+        id: summary
+        run: |
+          set -e
+          mapfile -t files < <(find artifacts -type f -name "*.xml" | grep -E "junit|jest-junit|e2e|backend" || true)
+
+          out=""
+          for f in "${files[@]}"; do
+            fails=$(xmlstarlet sel -t -v "sum(//testsuite/@failures) + sum(//testsuite/@errors)" "$f" 2>/dev/null || echo "0")
+            if [[ "$fails" != "0" ]]; then
+              out+="\n### Failures in: $f (count=$fails)\n"
+              out+=$(xmlstarlet sel -t -m "//testcase[failure or error]" -v "concat(@classname,'::',@name)" -n "$f" 2>/dev/null | head -n 40 | sed 's/^/- /')
+              out+="\n"
+            fi
+          done
+
+          if [[ -z "$out" ]]; then
+            out="Artifacts downloaded but no failing testcases were found in JUnit XML."
+          fi
+
+          echo "text<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$out" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Package reports to attach
+        if: steps.gate.outputs.create == 'true'
+        id: pkg
+        run: |
+          set -e
+          mkdir -p jira-attachments
+
+          # Grab common report/log files if they exist
+          find artifacts -type f \( \
+            -name "*.html" -o \
+            -name "*.xml" -o \
+            -name "*.log" \
+          \) -print | head -n 200 > files.txt || true
+
+          # Copy into attachment folder (preserve structure-ish)
+          while IFS= read -r f; do
+            dest="jira-attachments/${f#artifacts/}"
+            mkdir -p "$(dirname "$dest")"
+            cp "$f" "$dest" || true
+          done < files.txt
+
+          # Zip them (Jira attachment limit varies; zip keeps it tidy)
+          zip -r jira-attachments.zip jira-attachments >/dev/null
+
+          echo "zip=jira-attachments.zip" >> $GITHUB_OUTPUT
+
+      - name: Create/Update JIRA issue (main only)
+        if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'
+        id: jira
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROJECT_KEY: ${{ secrets.JIRA_PROJECT_KEY }}
+          JIRA_ISSUE_TYPE: ${{ secrets.JIRA_ISSUE_TYPE }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SUMMARY_TEXT: ${{ steps.summary.outputs.text }}
+        run: |
+          set -e
+          auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64)
+          label="gha-${COMMIT_SHA}"
+
+          # Search existing issue by label to avoid duplicates
+          jql="project=${JIRA_PROJECT_KEY} AND labels=${label} ORDER BY created DESC"
+          jql_enc=$(python - <<PY
+          import urllib.parse
+          print(urllib.parse.quote("""$jql"""))
+          PY
+          )
+
+                    existing_key=$(curl -sS -H "Authorization: Basic $auth" -H "Accept: application/json" \
+                      "$JIRA_BASE_URL/rest/api/3/search?jql=$jql_enc" | python - <<'PY'
+          import sys, json
+          data=json.load(sys.stdin)
+          issues=data.get("issues", [])
+          print(issues[0]["key"] if issues else "")
+          PY
+          )
+
+                    desc=$(python - <<'PY'
+          import os
+          print(f"""CI run: {os.environ['RUN_URL']}
+          Commit: {os.environ['COMMIT_SHA']}
+
+          Failures summary:
+          {os.environ.get('SUMMARY_TEXT','')}
+          """)
+          PY
+          )
+
+                    if [[ -n "$existing_key" ]]; then
+                      issue="$existing_key"
+                      echo "Updating existing issue: $issue"
+                      curl -sS -X POST \
+                        -H "Authorization: Basic $auth" \
+                        -H "Content-Type: application/json" \
+                        "$JIRA_BASE_URL/rest/api/3/issue/$issue/comment" \
+                        -d "$(python - <<PY
+          import json, os
+          body=os.environ["desc"]
+          print(json.dumps({"body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":body}]}]}}))
+          PY
+          )" >/dev/null
+                    else
+                      echo "Creating new issue..."
+                      issue=$(curl -sS -X POST \
+                        -H "Authorization: Basic $auth" \
+                        -H "Content-Type: application/json" \
+                        "$JIRA_BASE_URL/rest/api/3/issue" \
+                        -d "$(python - <<PY
+          import json, os
+          payload={
+            "fields":{
+              "project":{"key":os.environ["JIRA_PROJECT_KEY"]},
+              "issuetype":{"name":os.environ["JIRA_ISSUE_TYPE"]},
+              "summary":f"[CI] Test failures on main @ {os.environ['COMMIT_SHA'][:7]}",
+              "labels":[f"gha-{os.environ['COMMIT_SHA']}", "ci", "automated"],
+              "description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":os.environ["desc"]}]}]}
+            }
+          }
+          print(json.dumps(payload))
+          PY
+          )" | python - <<'PY'
+          import sys, json
+          print(json.load(sys.stdin)["key"])
+          PY
+          )
+          fi
+
+          echo "issue=$issue" >> $GITHUB_OUTPUT
+
+      - name: Attach reports + logs to JIRA issue
+        if: steps.gate.outputs.create == 'true' && github.ref == 'refs/heads/main'
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_KEY: ${{ steps.jira.outputs.issue }}
+          ZIP_FILE: ${{ steps.pkg.outputs.zip }}
+        run: |
+          set -e
+          auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64)
+
+          # Jira requires this header to allow attachments
+          curl -sS -X POST \
+            -H "Authorization: Basic $auth" \
+            -H "X-Atlassian-Token: no-check" \
+            -F "file=@${ZIP_FILE}" \
+            "$JIRA_BASE_URL/rest/api/3/issue/${ISSUE_KEY}/attachments" >/dev/null
+
+          echo "Attached ${ZIP_FILE} to ${ISSUE_KEY}"

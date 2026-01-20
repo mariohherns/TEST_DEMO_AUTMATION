@@ -58,7 +58,7 @@ class JobCreate(BaseModel):
     - Ensures input_text is always present
     - Prevents malformed job submissions
     """
-    input_text: str
+    input_texts: str
 
 
 class JobOut(BaseModel):

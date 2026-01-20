@@ -319,23 +319,19 @@ jobs:
           set -e
           mkdir -p jira-attachments
 
-          # Grab common report/log files if they exist
           find artifacts -type f \( \
             -name "*.html" -o \
             -name "*.xml" -o \
             -name "*.log" \
           \) -print | head -n 200 > files.txt || true
 
-          # Copy into attachment folder (preserve structure-ish)
           while IFS= read -r f; do
             dest="jira-attachments/${f#artifacts/}"
             mkdir -p "$(dirname "$dest")"
             cp "$f" "$dest" || true
           done < files.txt
 
-          # Zip them (Jira attachment limit varies; zip keeps it tidy)
           zip -r jira-attachments.zip jira-attachments >/dev/null
-
           echo "zip=jira-attachments.zip" >> $GITHUB_OUTPUT
 
       - name: Create/Update JIRA issue (main only)
@@ -353,22 +349,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
+          # sanitize Jira base url (remove hidden CRLF/newlines + trailing slash)
+          JIRA_BASE_URL="$(printf "%s" "$JIRA_BASE_URL" | tr -d '\r\n' | sed 's:/*$::')"
+
           label="gha-${COMMIT_SHA}"
 
-          jql="project=${JIRA_PROJECT_KEY} AND labels=${label} ORDER BY created DESC"
-          jql_enc=$(python3 - <<PY
-          import urllib.parse
-          print(urllib.parse.quote("""$jql"""))
-          PY
-          )
-
-          # search existing
+          # Safe search using urlencoded jql (avoids curl URL malformed errors)
           resp=$(mktemp)
           code=$(curl -sS -o "$resp" -w "%{http_code}" \
-            -H "Authorization: Basic $auth" \
+            -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
             -H "Accept: application/json" \
-            "$JIRA_BASE_URL/rest/api/3/search?jql=$jql_enc")
+            -G \
+            --data-urlencode "jql=project=${JIRA_PROJECT_KEY} AND labels=${label} ORDER BY created DESC" \
+            "${JIRA_BASE_URL}/rest/api/3/search")
 
           if [[ "$code" -ge 400 ]]; then
             echo "Jira search failed HTTP $code"
@@ -376,15 +369,15 @@ jobs:
             exit 1
           fi
 
-          existing_key=$(python3 - <<'PY'
+          existing_key=$(python3 - "$resp" <<'PY'
           import json,sys
           data=json.load(open(sys.argv[1]))
           issues=data.get("issues",[])
           print(issues[0]["key"] if issues else "")
           PY
-          "$resp")
+          )
 
-                    desc=$(python3 - <<'PY'
+          desc=$(python3 - <<'PY'
           import os
           print(f"""CI run: {os.environ['RUN_URL']}
           Commit: {os.environ['COMMIT_SHA']}
@@ -394,31 +387,41 @@ jobs:
           """)
           PY
           )
+          export DESC="$desc"
 
-                    if [[ -n "$existing_key" ]]; then
-                      issue="$existing_key"
-                      echo "Updating existing issue: $issue"
-                      payload=$(python3 - <<PY
+          if [[ -n "$existing_key" ]]; then
+            issue="$existing_key"
+            echo "Updating existing issue: $issue"
+
+            payload=$(python3 - <<'PY'
           import json, os
-          body=os.environ["desc"]
-          print(json.dumps({"body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":body}]}]}}))
+          body=os.environ["DESC"]
+          print(json.dumps({
+            "body":{
+              "type":"doc","version":1,
+              "content":[{"type":"paragraph","content":[{"type":"text","text":body}]}]
+            }
+          }))
           PY
           )
-                      resp2=$(mktemp)
-                      code2=$(curl -sS -o "$resp2" -w "%{http_code}" -X POST \
-                        -H "Authorization: Basic $auth" \
-                        -H "Accept: application/json" \
-                        -H "Content-Type: application/json" \
-                        "$JIRA_BASE_URL/rest/api/3/issue/$issue/comment" \
-                        -d "$payload")
-                      if [[ "$code2" -ge 400 ]]; then
-                        echo "Jira comment failed HTTP $code2"
-                        cat "$resp2"
-                        exit 1
-                      fi
-                    else
-                      echo "Creating new issue..."
-                      payload=$(python3 - <<PY
+
+            resp2=$(mktemp)
+            code2=$(curl -sS -o "$resp2" -w "%{http_code}" -X POST \
+              -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              "${JIRA_BASE_URL}/rest/api/3/issue/$issue/comment" \
+              -d "$payload")
+
+            if [[ "$code2" -ge 400 ]]; then
+              echo "Jira comment failed HTTP $code2"
+              cat "$resp2"
+              exit 1
+            fi
+          else
+            echo "Creating new issue..."
+
+            payload=$(python3 - <<'PY'
           import json, os
           payload={
             "fields":{
@@ -426,30 +429,36 @@ jobs:
               "issuetype":{"name":os.environ["JIRA_ISSUE_TYPE"]},
               "summary":f"[CI] Test failures on main @ {os.environ['COMMIT_SHA'][:7]}",
               "labels":[f"gha-{os.environ['COMMIT_SHA']}", "ci", "automated"],
-              "description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":os.environ["desc"]}]}]}
+              "description":{
+                "type":"doc","version":1,
+                "content":[{"type":"paragraph","content":[{"type":"text","text":os.environ["DESC"]}]}]
+              }
             }
           }
           print(json.dumps(payload))
           PY
           )
-                      resp3=$(mktemp)
-                      code3=$(curl -sS -o "$resp3" -w "%{http_code}" -X POST \
-                        -H "Authorization: Basic $auth" \
-                        -H "Accept: application/json" \
-                        -H "Content-Type: application/json" \
-                        "$JIRA_BASE_URL/rest/api/3/issue" \
-                        -d "$payload")
-                      if [[ "$code3" -ge 400 ]]; then
-                        echo "Jira create issue failed HTTP $code3"
-                        cat "$resp3"
-                        exit 1
-                      fi
-                      issue=$(python3 - <<'PY'
+
+            resp3=$(mktemp)
+            code3=$(curl -sS -o "$resp3" -w "%{http_code}" -X POST \
+              -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+              -H "Accept: application/json" \
+              -H "Content-Type: application/json" \
+              "${JIRA_BASE_URL}/rest/api/3/issue" \
+              -d "$payload")
+
+            if [[ "$code3" -ge 400 ]]; then
+              echo "Jira create issue failed HTTP $code3"
+              cat "$resp3"
+              exit 1
+            fi
+
+            issue=$(python3 - "$resp3" <<'PY'
           import json,sys
           data=json.load(open(sys.argv[1]))
           print(data["key"])
           PY
-          "$resp3")
+          )
           fi
 
           echo "issue=$issue" >> $GITHUB_OUTPUT
@@ -463,9 +472,14 @@ jobs:
           ISSUE_KEY: ${{ steps.jira.outputs.issue }}
         run: |
           set -euo pipefail
-          auth=$(printf "%s:%s" "$JIRA_EMAIL" "$JIRA_API_TOKEN" | base64 -w 0)
 
-          # Attach the zip created earlier
+          JIRA_BASE_URL="$(printf "%s" "$JIRA_BASE_URL" | tr -d '\r\n' | sed 's:/*$::')"
+
+          if [[ -z "${ISSUE_KEY:-}" ]]; then
+            echo "No ISSUE_KEY produced; skipping attachment."
+            exit 0
+          fi
+
           if [[ ! -f jira-attachments.zip ]]; then
             echo "No jira-attachments.zip found; skipping attachment."
             exit 0
@@ -473,11 +487,11 @@ jobs:
 
           resp=$(mktemp)
           code=$(curl -sS -o "$resp" -w "%{http_code}" -X POST \
-            -H "Authorization: Basic $auth" \
+            -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
             -H "X-Atlassian-Token: no-check" \
             -H "Accept: application/json" \
             -F "file=@jira-attachments.zip" \
-            "$JIRA_BASE_URL/rest/api/3/issue/${ISSUE_KEY}/attachments")
+            "${JIRA_BASE_URL}/rest/api/3/issue/${ISSUE_KEY}/attachments")
 
           if [[ "$code" -ge 400 ]]; then
             echo "Jira attach failed HTTP $code"
